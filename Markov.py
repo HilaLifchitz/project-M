@@ -20,7 +20,7 @@ The Wright-Fisher process with selection and mutation forms a finite Markov
 chain on state space {0, 1, 2, ..., N} where each state represents the
 number of "1" alleles in the population.
 
-The transition probability from j "1" alleles to i "1" alleles is:
+The transition probability from j "1" alleles to i "1" alleles is at any time step t:
     P[i,j] = Binomial(N, i, p')
     
 where p' is the frequency after selection and mutation:
@@ -141,14 +141,16 @@ class WrightFisherMarkovChain:
             # Mixed population: selection changes frequency
             numerator = x * (1 + self.s)
             denominator = x * (1 + self.s) + (1 - x) * 1.0
-            p_sel = numerator / denominator
+            p_sel = numerator / denominator # relative fitness of j "1" alleles
         
         # STEP 2: Apply symmetric mutation
         # Mutation rate μ: probability that each allele flips
         # P("1" → "0") = μ, P("1" → "1") = 1-μ  
         # P("0" → "1") = μ, P("0" → "0") = 1-μ
         # Expected frequency after mutation:
-        p_prime = (1 - self.mu) * p_sel + self.mu * (1 - p_sel)
+        p_prime = (1 - self.mu) * p_sel + self.mu * (1 - p_sel) 
+        # p_sel is the expected portion of the 1 allele, but from which (1-mu) wont flip to 0,
+        # and mu times the portion of the 0 allele (=1-p_sel) will flip from 0 to 1.
         
         # STEP 3: Binomial sampling for next generation
         # Each of N individuals independently has probability p_prime of being "1"
@@ -164,7 +166,7 @@ class WrightFisherMarkovChain:
         
         Mathematical Properties:
         -----------------------
-        - P is row-stochastic: each row sums to 1 (conservation of probability)
+        - P is column-stochastic: each column sums to 1 (conservation of probability)
         - P is irreducible if μ > 0 (mutation connects all states)
         - P has unique stationary distribution if irreducible and finite
         - Boundary behavior:
@@ -184,10 +186,10 @@ class WrightFisherMarkovChain:
                 self.P[i, j] = self._compute_transition_probability(j, i)
         
         # Verify row-stochastic property (debugging)
-        row_sums = np.sum(self.P, axis=0)  # Sum over rows for each column
-        if not np.allclose(row_sums, 1.0, atol=1e-10) and not self.quiet:
+        column_sums = np.sum(self.P, axis=0)  # Sum over rows for each column
+        if not np.allclose(column_sums, 1.0, atol=1e-10) and not self.quiet:
             print(f"Warning: Transition matrix not exactly row-stochastic")
-            print(f"Column sums: min={np.min(row_sums):.2e}, max={np.max(row_sums):.2e}")
+            print(f"Column sums: min={np.min(column_sums):.2e}, max={np.max(column_sums):.2e}")
         
         if not self.quiet:
             print(f"Transition matrix constructed: shape {self.P.shape}")
@@ -311,7 +313,7 @@ class WrightFisherMarkovChain:
         if len(unity_indices) == 0:
             print("⚠️  ERROR: No eigenvalue equal to 1 found!")
             print("   This violates fundamental Markov chain theory.")
-            print("   Check if P is row-stochastic.")
+            print("   Check if P is column-stochastic.")
             return
         elif len(unity_indices) == 1:
             print("✅ GOOD: Exactly one eigenvalue = 1 (unique stationary distribution)")
@@ -398,10 +400,10 @@ class WrightFisherMarkovChain:
         """
         Solve for stationary distribution using eigenvalue decomposition.
         
-        The stationary distribution π is the left eigenvector of P with eigenvalue 1:
-            π = P^T π
+        The stationary distribution π is the right eigenvector of P with eigenvalue 1:
+            π = P π
             
-        We find this as the eigenvector corresponding to eigenvalue 1 of P^T.
+        We find this as the eigenvector corresponding to eigenvalue 1 of P.
         
         Mathematical Notes:
         ------------------
@@ -472,7 +474,7 @@ class WrightFisherMarkovChain:
         Solve for stationary distribution using iterative power method.
         
         The power method iteratively applies the transition matrix:
-            π^(k+1) = P^T π^(k)
+            π^(k+1) = P π^(k)
             
         For irreducible finite Markov chains, this converges to the unique
         stationary distribution regardless of initial condition.
@@ -480,7 +482,7 @@ class WrightFisherMarkovChain:
         Algorithm:
         ----------
         1. Initialize π^(0) = uniform distribution
-        2. Iterate: π^(k+1) = P^T π^(k)  
+        2. Iterate: π^(k+1) = P π^(k)  
         3. Normalize: π^(k+1) = π^(k+1) / ||π^(k+1)||_1
         4. Check convergence: ||π^(k+1) - π^(k)|| < tolerance
         5. Return π^(k+1) when converged
@@ -504,7 +506,7 @@ class WrightFisherMarkovChain:
         
         for iteration in range(self.max_iter):
             # Apply transition matrix (transpose for left eigenvector)
-            pi_new = self.P.T @ pi
+            pi_new = self.P @ pi
             
             # Normalize to maintain probability distribution
             pi_new = pi_new / np.sum(pi_new)
@@ -693,6 +695,298 @@ class WrightFisherMarkovChain:
         plt.show()
         
         return fig
+
+
+def evolve_from_neutral_to_selection(N, mu, s_target=0.005, max_generations=10000, 
+                                   convergence_tol=1e-8, save_every=10):
+    """
+    Evolve from neutral steady state (phi*) to selection steady state (psi*).
+    
+    This function implements your analysis:
+    1. Calculate phi* (steady state for s=0) 
+    2. Use phi* as psi(0) (initial condition)
+    3. Run Markov process with s=s_target until convergence to psi*
+    4. Track D(t), I(t), and rest(t) at each time step
+    
+    Parameters:
+    -----------
+    N : int
+        Population size
+    mu : float
+        Mutation rate
+    s_target : float, optional (default=0.005)
+        Target selection coefficient
+    max_generations : int, optional (default=10000)
+        Maximum number of generations
+    convergence_tol : float, optional (default=1e-8)
+        Convergence tolerance
+    save_every : int, optional (default=10)
+        Save distribution every N generations
+        
+    Returns:
+    --------
+    dict
+        Dictionary containing all results and trajectories
+    """
+    
+    print("="*80)
+    print("EVOLUTION FROM NEUTRAL TO SELECTION")
+    print("="*80)
+    print(f"Parameters: N={N}, μ={mu}")
+    print(f"Neutral (s=0) → Selection (s={s_target})")
+    print("="*80)
+    
+    # Step 1: Calculate phi* (neutral steady state, s=0)
+    print("\nStep 1: Calculating φ* (neutral steady state, s=0)")
+    phi_star = compute_stationary_quiet(N=N, s=0.0, mu=mu, method='direct')
+    print(f"  φ* calculated: mean freq = {np.sum(np.arange(N+1) * phi_star) / N:.4f}")
+    
+    # Step 2: Calculate psi* (selection steady state)
+    print(f"\nStep 2: Calculating ψ* (selection steady state, s={s_target})")
+    psi_star = compute_stationary_quiet(N=N, s=s_target, mu=mu, method='direct')
+    print(f"  ψ* calculated: mean freq = {np.sum(np.arange(N+1) * psi_star) / N:.4f}")
+    
+    # Step 3: Create selection chain for evolution
+    print(f"\nStep 3: Creating selection chain for evolution")
+    selection_chain = WrightFisherMarkovChain(N=N, s=s_target, mu=mu, quiet=True)
+    selection_chain.construct_transition_matrix()
+    
+    # Step 4: Evolve from phi* (psi(0)) to psi*
+    print(f"\nStep 4: Evolving from φ* to ψ*")
+    print(f"  Initial condition: ψ(0) = φ*")
+    print(f"  Target: ψ* (s={s_target})")
+    print(f"  Tracking: D(t), I(t), and rest(t) every {save_every} generations")
+    
+    # Initialize with phi* (neutral steady state)
+    psi_t = phi_star.copy()
+    
+    # Storage for trajectory and quantities
+    psi_trajectory = [psi_t.copy()]
+    generations = [0]
+    D_t = []  # KL divergence D(t) = KL(ψ(t) || φ*)
+    I_t = []  # KL divergence I(t) = KL(ψ(t) || ψ*)
+    rest_t = []  # Cross-term rest = ∫ₓ ψ(t)(x) * log(ψ*(x)/φ*(x))
+    
+    # Calculate initial quantities
+    epsilon = 1e-12
+    phi_star_safe = phi_star + epsilon
+    psi_star_safe = psi_star + epsilon
+    phi_star_safe = phi_star_safe / np.sum(phi_star_safe)
+    psi_star_safe = psi_star_safe / np.sum(psi_star_safe)
+    
+    # Initial D(0), I(0), and rest(0)
+    psi_t_safe = psi_t + epsilon
+    psi_t_safe = psi_t_safe / np.sum(psi_t_safe)
+    
+    D_0 = np.sum(psi_t_safe * np.log2(psi_t_safe / phi_star_safe))
+    I_0 = np.sum(psi_t_safe * np.log2(psi_t_safe / psi_star_safe))
+    rest_0 = np.sum(psi_t_safe * np.log2(psi_star_safe / phi_star_safe))
+    
+    D_t.append(D_0)
+    I_t.append(I_0)
+    rest_t.append(rest_0)
+    
+    print(f"  Initial quantities:")
+    print(f"    D(0) = {D_0:.6f} bits")
+    print(f"    I(0) = {I_0:.6f} bits")
+    print(f"    rest(0) = {rest_0:.6f} bits")
+    print(f"    Verification D(0) = I(0) + rest(0): {D_0:.6f} = {I_0 + rest_0:.6f} ✓")
+    
+    # Evolution loop
+    converged = False
+    final_generation = 0
+    
+    for generation in range(1, max_generations + 1):
+        # Apply transition matrix: psi(t+1) = P * psi(t)
+        psi_new = selection_chain.P @ psi_t
+        
+        # Check convergence to psi*
+        error = np.linalg.norm(psi_new - psi_star, ord=1)  # L1 distance to target
+        
+        if error < convergence_tol:
+            converged = True
+            final_generation = generation
+            print(f"  ✓ Converged to ψ* at generation {generation}")
+            print(f"    Final error: {error:.2e}")
+            break
+        
+        # Update for next iteration
+        psi_t = psi_new
+        
+        # Calculate and save quantities every save_every generations
+        if generation % save_every == 0:
+            psi_trajectory.append(psi_t.copy())
+            generations.append(generation)
+            
+            # Calculate D(t), I(t), and rest(t)
+            psi_t_safe = psi_t + epsilon
+            psi_t_safe = psi_t_safe / np.sum(psi_t_safe)
+            
+            D_current = np.sum(psi_t_safe * np.log2(psi_t_safe / phi_star_safe))
+            I_current = np.sum(psi_t_safe * np.log2(psi_t_safe / psi_star_safe))
+            rest_current = np.sum(psi_t_safe * np.log2(psi_star_safe / phi_star_safe))
+            
+            D_t.append(D_current)
+            I_t.append(I_current)
+            rest_t.append(rest_current)
+            
+            if generation % (save_every * 10) == 0:
+                mean_freq = np.sum(np.arange(N + 1) * psi_t) / N
+                print(f"    Generation {generation}: mean freq = {mean_freq:.4f}, error = {error:.2e}")
+                print(f"      D({generation}) = {D_current:.6f}, I({generation}) = {I_current:.6f}, rest({generation}) = {rest_current:.6f}")
+                print(f"      Verification: D = I + rest → {D_current:.6f} = {I_current + rest_current:.6f} ✓")
+    
+    # Add final state if not already saved
+    if generations[-1] != final_generation:
+        psi_trajectory.append(psi_t.copy())
+        generations.append(final_generation)
+        
+        # Calculate final quantities
+        psi_t_safe = psi_t + epsilon
+        psi_t_safe = psi_t_safe / np.sum(psi_t_safe)
+        
+        D_final = np.sum(psi_t_safe * np.log2(psi_t_safe / phi_star_safe))
+        I_final = np.sum(psi_t_safe * np.log2(psi_t_safe / psi_star_safe))
+        rest_final = np.sum(psi_t_safe * np.log2(psi_star_safe / phi_star_safe))
+        
+        D_t.append(D_final)
+        I_t.append(I_final)
+        rest_t.append(rest_final)
+    
+    if not converged:
+        print(f"  ⚠ Warning: Did not converge within {max_generations} generations")
+        print(f"    Final error: {error:.2e}")
+    
+    # Final summary
+    print(f"\nStep 5: Final Results")
+    print(f"  Final quantities:")
+    print(f"    D({final_generation}) = {D_t[-1]:.6f} bits")
+    print(f"    I({final_generation}) = {I_t[-1]:.6f} bits")
+    print(f"    rest({final_generation}) = {rest_t[-1]:.6f} bits")
+    print(f"    Verification D = I + rest: {D_t[-1]:.6f} = {I_t[-1] + rest_t[-1]:.6f} ✓")
+    
+    # Prepare results
+    results = {
+        'phi_star': phi_star,
+        'psi_star': psi_star,
+        'psi_trajectory': psi_trajectory,
+        'generations': generations,
+        'D_t': D_t,
+        'I_t': I_t,
+        'rest_t': rest_t,
+        'convergence_info': {
+            'converged': converged,
+            'final_generation': final_generation,
+            'final_error': error if 'error' in locals() else None,
+            's_target': s_target
+        }
+    }
+    
+    return results
+
+
+def plot_evolution_analysis(evolution_results, N, figsize=(15, 12)):
+    """
+    Plot comprehensive analysis of the evolution from neutral to selection.
+    
+    Parameters:
+    -----------
+    evolution_results : dict
+        Results from evolve_from_neutral_to_selection()
+    N : int
+        Population size
+    figsize : tuple, optional (default=(15, 12))
+        Figure size
+    """
+    
+    phi_star = evolution_results['phi_star']
+    psi_star = evolution_results['psi_star']
+    psi_trajectory = evolution_results['psi_trajectory']
+    generations = evolution_results['generations']
+    D_t = evolution_results['D_t']
+    I_t = evolution_results['I_t']
+    rest_t = evolution_results['rest_t']
+    conv_info = evolution_results['convergence_info']
+    
+    # Create figure with subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=figsize)
+    
+    states = np.arange(N + 1)
+    
+    # Plot 1: Compare phi*, psi*, and final psi(t)
+    ax1.bar(states - 0.2, phi_star, width=0.4, alpha=0.7, 
+            label='φ* (neutral, s=0)', color='blue')
+    ax1.bar(states + 0.2, psi_star, width=0.4, alpha=0.7, 
+            label='ψ* (selection, s=0.005)', color='red')
+    
+    # Add final evolved state
+    if len(psi_trajectory) > 0:
+        final_psi = psi_trajectory[-1]
+        ax1.plot(states, final_psi, 'o-', color='green', markersize=4,
+                label=f'ψ({conv_info["final_generation"]}) (evolved)')
+    
+    ax1.set_xlabel('Number of "1" alleles')
+    ax1.set_ylabel('Probability')
+    ax1.set_title('Distribution Comparison')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: D(t) and I(t) on the same plot
+    ax2.plot(generations, D_t, 'o-', color='blue', linewidth=2, 
+            label='D(t) = KL(ψ(t) || φ*)', markersize=4)
+    ax2.plot(generations, I_t, 's-', color='red', linewidth=2, 
+            label='I(t) = KL(ψ(t) || ψ*)', markersize=4)
+    
+    ax2.set_xlabel('Generation')
+    ax2.set_ylabel('KL Divergence [bits]')
+    ax2.set_title('KL Divergences: D(t) and I(t)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Plot 3: Evolution of mean frequency over time
+    if len(psi_trajectory) > 1:
+        mean_frequencies = []
+        for psi_t in psi_trajectory:
+            mean_freq = np.sum(states * psi_t) / N
+            mean_frequencies.append(mean_freq)
+        
+        ax3.plot(generations, mean_frequencies, 'o-', color='purple', linewidth=2)
+        ax3.axhline(np.sum(states * phi_star) / N, color='blue', 
+                   linestyle='--', alpha=0.7, label='φ* mean')
+        ax3.axhline(np.sum(states * psi_star) / N, color='red', 
+                   linestyle='--', alpha=0.7, label='ψ* mean')
+        
+        ax3.set_xlabel('Generation')
+        ax3.set_ylabel('Mean frequency of "1" allele')
+        ax3.set_title('Evolution of Mean Frequency')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+    
+    # Plot 4: Verification plot - D(t) vs I(t) + rest(t)
+    if len(D_t) > 0 and len(I_t) > 0 and len(rest_t) > 0:
+        verification = [i + r for i, r in zip(I_t, rest_t)]
+        ax4.plot(generations, D_t, 'o-', color='blue', linewidth=2, 
+                label='D(t)', markersize=4)
+        ax4.plot(generations, verification, 's-', color='green', linewidth=2, 
+                label='I(t) + rest(t)', markersize=4)
+        
+        # Calculate and display the difference
+        differences = [abs(d - v) for d, v in zip(D_t, verification)]
+        max_diff = max(differences)
+        ax4.text(0.02, 0.98, f'Max difference: {max_diff:.2e}', 
+                transform=ax4.transAxes, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        ax4.set_xlabel('Generation')
+        ax4.set_ylabel('KL Divergence [bits]')
+        ax4.set_title('Verification: D(t) = I(t) + rest(t)')
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig
 
 
 def compute_kl_divergences(results_dict):
@@ -1027,7 +1321,377 @@ def run_markov_analysis_example():
     
     return results
 
+    def evolve_from_neutral_to_selection(self, s_target=0.005, max_generations=10000, 
+                                       convergence_tol=1e-8, save_every=10):
+        """
+        Evolve from neutral steady state (phi*) to selection steady state (psi*).
+        
+        This method implements the analysis you described:
+        1. Calculate phi* (steady state for s=0) 
+        2. Use phi* as psi(0) (initial condition)
+        3. Run Markov process with s=s_target until convergence to psi*
+        4. Track evolution and make comparisons
+        
+        Parameters:
+        -----------
+        s_target : float, optional (default=0.005)
+            Target selection coefficient to evolve towards
+        max_generations : int, optional (default=10000)
+            Maximum number of generations to run
+        convergence_tol : float, optional (default=1e-8)
+            Convergence tolerance for psi* calculation
+        save_every : int, optional (default=10)
+            Save distribution every N generations for analysis
+            
+        Returns:
+        --------
+        dict
+            Dictionary containing:
+            - phi_star: Neutral steady state distribution (s=0)
+            - psi_star: Selection steady state distribution (s=s_target)
+            - psi_trajectory: List of distributions over time
+            - generations: List of generation numbers
+            - D_t: KL divergence D(t) = KL(ψ(t) || φ*)
+            - I_t: KL divergence I(t) = KL(ψ(t) || ψ*)
+            - rest_t: Cross-term rest = ∫ₓ ψ(t)(x) * log(ψ*(x)/φ*(x))
+            - convergence_info: Information about convergence
+        """
+        
+        if not self.quiet:
+            print("="*80)
+            print("EVOLUTION FROM NEUTRAL TO SELECTION")
+            print("="*80)
+            print(f"Parameters: N={self.N}, μ={self.mu}")
+            print(f"Neutral (s=0) → Selection (s={s_target})")
+            print("="*80)
+        
+        # Step 1: Calculate phi* (neutral steady state, s=0)
+        if not self.quiet:
+            print("\nStep 1: Calculating φ* (neutral steady state, s=0)")
+        
+        neutral_chain = WrightFisherMarkovChain(N=self.N, s=0.0, mu=self.mu, quiet=True)
+        phi_star = neutral_chain.compute_stationary_distribution(method='direct')
+        
+        if not self.quiet:
+            neutral_stats = neutral_chain.get_stationary_statistics()
+            print(f"  φ* calculated: mean freq = {neutral_stats['mean_frequency']:.4f}")
+            print(f"  Mode: {neutral_stats['mode_count']}, P(extinction) = {neutral_stats['probability_extinction']:.2e}")
+        
+        # Step 2: Create selection chain (s=s_target)
+        if not self.quiet:
+            print(f"\nStep 2: Creating selection chain (s={s_target})")
+        
+        selection_chain = WrightFisherMarkovChain(N=self.N, s=s_target, mu=self.mu, quiet=True)
+        selection_chain.construct_transition_matrix()
+        
+        # Step 3: Calculate psi* (selection steady state) for comparison
+        if not self.quiet:
+            print(f"\nStep 3: Calculating ψ* (selection steady state, s={s_target})")
+        
+        psi_star = selection_chain.compute_stationary_distribution(method='direct')
+        
+        if not self.quiet:
+            selection_stats = selection_chain.get_stationary_statistics()
+            print(f"  ψ* calculated: mean freq = {selection_stats['mean_frequency']:.4f}")
+            print(f"  Mode: {selection_stats['mode_count']}, P(extinction) = {selection_stats['probability_extinction']:.2e}")
+        
+        # Step 4: Evolve from phi* (psi(0)) to psi*
+        if not self.quiet:
+            print(f"\nStep 4: Evolving from φ* to ψ*")
+            print(f"  Initial condition: ψ(0) = φ*")
+            print(f"  Target: ψ* (s={s_target})")
+            print(f"  Max generations: {max_generations}")
+            print(f"  Convergence tolerance: {convergence_tol}")
+            print(f"  Tracking: D(t), I(t), and rest at every {save_every} generations")
+        
+        # Initialize with phi* (neutral steady state)
+        psi_t = phi_star.copy()
+        
+        # Storage for trajectory and quantities
+        psi_trajectory = [psi_t.copy()]
+        generations = [0]
+        D_t = []  # KL divergence D(t) = KL(ψ(t) || φ*)
+        I_t = []  # KL divergence I(t) = KL(ψ(t) || ψ*)
+        rest_t = []  # Cross-term rest = ∫ₓ ψ(t)(x) * log(ψ*(x)/φ*(x))
+        
+        # Calculate initial quantities
+        epsilon = 1e-12
+        phi_star_safe = phi_star + epsilon
+        psi_star_safe = psi_star + epsilon
+        phi_star_safe = phi_star_safe / np.sum(phi_star_safe)
+        psi_star_safe = psi_star_safe / np.sum(psi_star_safe)
+        
+        # Initial D(0), I(0), and rest(0)
+        psi_t_safe = psi_t + epsilon
+        psi_t_safe = psi_t_safe / np.sum(psi_t_safe)
+        
+        D_0 = np.sum(psi_t_safe * np.log2(psi_t_safe / phi_star_safe))
+        I_0 = np.sum(psi_t_safe * np.log2(psi_t_safe / psi_star_safe))
+        rest_0 = np.sum(psi_t_safe * np.log2(psi_star_safe / phi_star_safe))
+        
+        D_t.append(D_0)
+        I_t.append(I_0)
+        rest_t.append(rest_0)
+        
+        if not self.quiet:
+            print(f"  Initial quantities:")
+            print(f"    D(0) = {D_0:.6f} bits")
+            print(f"    I(0) = {I_0:.6f} bits")
+            print(f"    rest(0) = {rest_0:.6f} bits")
+            print(f"    Verification D(0) = I(0) + rest(0): {D_0:.6f} = {I_0 + rest_0:.6f} ✓")
+        
+        # Evolution loop
+        converged = False
+        final_generation = 0
+        
+        for generation in range(1, max_generations + 1):
+            # Apply transition matrix: psi(t+1) = P * psi(t)
+            psi_new = selection_chain.P @ psi_t
+            
+            # Check convergence to psi*
+            error = norm(psi_new - psi_star, ord=1)  # L1 distance to target
+            
+            if error < convergence_tol:
+                converged = True
+                final_generation = generation
+                if not self.quiet:
+                    print(f"  ✓ Converged to ψ* at generation {generation}")
+                    print(f"    Final error: {error:.2e}")
+                break
+            
+            # Update for next iteration
+            psi_t = psi_new
+            
+            # Calculate and save quantities every save_every generations
+            if generation % save_every == 0:
+                psi_trajectory.append(psi_t.copy())
+                generations.append(generation)
+                
+                # Calculate D(t), I(t), and rest(t)
+                psi_t_safe = psi_t + epsilon
+                psi_t_safe = psi_t_safe / np.sum(psi_t_safe)
+                
+                D_current = np.sum(psi_t_safe * np.log2(psi_t_safe / phi_star_safe))
+                I_current = np.sum(psi_t_safe * np.log2(psi_t_safe / psi_star_safe))
+                rest_current = np.sum(psi_t_safe * np.log2(psi_star_safe / phi_star_safe))
+                
+                D_t.append(D_current)
+                I_t.append(I_current)
+                rest_t.append(rest_current)
+                
+                if not self.quiet and generation % (save_every * 10) == 0:
+                    # Calculate current statistics
+                    states = np.arange(self.N + 1)
+                    mean_count = np.sum(states * psi_t)
+                    mean_freq = mean_count / self.N
+                    print(f"    Generation {generation}: mean freq = {mean_freq:.4f}, error = {error:.2e}")
+                    print(f"      D({generation}) = {D_current:.6f}, I({generation}) = {I_current:.6f}, rest({generation}) = {rest_current:.6f}")
+                    print(f"      Verification: D = I + rest → {D_current:.6f} = {I_current + rest_current:.6f} ✓")
+        
+        # Add final state if not already saved
+        if generations[-1] != final_generation:
+            psi_trajectory.append(psi_t.copy())
+            generations.append(final_generation)
+            
+            # Calculate final quantities
+            psi_t_safe = psi_t + epsilon
+            psi_t_safe = psi_t_safe / np.sum(psi_t_safe)
+            
+            D_final = np.sum(psi_t_safe * np.log2(psi_t_safe / phi_star_safe))
+            I_final = np.sum(psi_t_safe * np.log2(psi_t_safe / psi_star_safe))
+            rest_final = np.sum(psi_t_safe * np.log2(psi_star_safe / phi_star_safe))
+            
+            D_t.append(D_final)
+            I_t.append(I_final)
+            rest_t.append(rest_final)
+        
+        if not converged and not self.quiet:
+            print(f"  ⚠ Warning: Did not converge within {max_generations} generations")
+            print(f"    Final error: {error:.2e}")
+        
+        # Step 5: Analysis and comparisons
+        if not self.quiet:
+            print(f"\nStep 5: Analysis and Comparisons")
+            
+            # Final verification
+            print(f"  Final quantities:")
+            print(f"    D({final_generation}) = {D_t[-1]:.6f} bits")
+            print(f"    I({final_generation}) = {I_t[-1]:.6f} bits")
+            print(f"    rest({final_generation}) = {rest_t[-1]:.6f} bits")
+            print(f"    Verification D = I + rest: {D_t[-1]:.6f} = {I_t[-1] + rest_t[-1]:.6f} ✓")
+            
+            # Mean frequency evolution
+            final_mean = np.sum(np.arange(self.N + 1) * psi_t) / self.N
+            phi_mean = np.sum(np.arange(self.N + 1) * phi_star) / self.N
+            psi_mean = np.sum(np.arange(self.N + 1) * psi_star) / self.N
+            
+            print(f"  Mean frequency evolution:")
+            print(f"    φ* (neutral): {phi_mean:.4f}")
+            print(f"    ψ* (selection): {psi_mean:.4f}")
+            print(f"    ψ({final_generation}) (final): {final_mean:.4f}")
+            print(f"    Change: {final_mean - phi_mean:.4f}")
+        
+        # Prepare results
+        results = {
+            'phi_star': phi_star,
+            'psi_star': psi_star,
+            'psi_trajectory': psi_trajectory,
+            'generations': generations,
+            'D_t': D_t,
+            'I_t': I_t,
+            'rest_t': rest_t,
+            'convergence_info': {
+                'converged': converged,
+                'final_generation': final_generation,
+                'final_error': error if 'error' in locals() else None,
+                's_target': s_target
+            },
+            'neutral_chain': neutral_chain,
+            'selection_chain': selection_chain
+        }
+        
+        return results
+    
+    def plot_evolution_analysis(self, evolution_results, figsize=(15, 12)):
+        """
+        Plot comprehensive analysis of the evolution from neutral to selection.
+        
+        Parameters:
+        -----------
+        evolution_results : dict
+            Results from evolve_from_neutral_to_selection()
+        figsize : tuple, optional (default=(15, 12))
+            Figure size
+        """
+        
+        phi_star = evolution_results['phi_star']
+        psi_star = evolution_results['psi_star']
+        psi_trajectory = evolution_results['psi_trajectory']
+        generations = evolution_results['generations']
+        D_t = evolution_results['D_t']
+        I_t = evolution_results['I_t']
+        rest_t = evolution_results['rest_t']
+        conv_info = evolution_results['convergence_info']
+        
+        # Create figure with subplots
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=figsize)
+        
+        states = np.arange(self.N + 1)
+        
+        # Plot 1: Compare phi*, psi*, and final psi(t)
+        ax1.bar(states - 0.2, phi_star, width=0.4, alpha=0.7, 
+                label='φ* (neutral, s=0)', color='blue')
+        ax1.bar(states + 0.2, psi_star, width=0.4, alpha=0.7, 
+                label='ψ* (selection, s=0.005)', color='red')
+        
+        # Add final evolved state
+        if len(psi_trajectory) > 0:
+            final_psi = psi_trajectory[-1]
+            ax1.plot(states, final_psi, 'o-', color='green', markersize=4,
+                    label=f'ψ({conv_info["final_generation"]}) (evolved)')
+        
+        ax1.set_xlabel('Number of "1" alleles')
+        ax1.set_ylabel('Probability')
+        ax1.set_title('Distribution Comparison')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: D(t) and I(t) on the same plot
+        ax2.plot(generations, D_t, 'o-', color='blue', linewidth=2, 
+                label='D(t) = KL(ψ(t) || φ*)', markersize=4)
+        ax2.plot(generations, I_t, 's-', color='red', linewidth=2, 
+                label='I(t) = KL(ψ(t) || ψ*)', markersize=4)
+        
+        ax2.set_xlabel('Generation')
+        ax2.set_ylabel('KL Divergence [bits]')
+        ax2.set_title('KL Divergences: D(t) and I(t)')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: Evolution of mean frequency over time
+        if len(psi_trajectory) > 1:
+            mean_frequencies = []
+            for psi_t in psi_trajectory:
+                mean_freq = np.sum(states * psi_t) / self.N
+                mean_frequencies.append(mean_freq)
+            
+            ax3.plot(generations, mean_frequencies, 'o-', color='purple', linewidth=2)
+            ax3.axhline(np.sum(states * phi_star) / self.N, color='blue', 
+                       linestyle='--', alpha=0.7, label='φ* mean')
+            ax3.axhline(np.sum(states * psi_star) / self.N, color='red', 
+                       linestyle='--', alpha=0.7, label='ψ* mean')
+            
+            ax3.set_xlabel('Generation')
+            ax3.set_ylabel('Mean frequency of "1" allele')
+            ax3.set_title('Evolution of Mean Frequency')
+            ax3.legend()
+            ax3.grid(True, alpha=0.3)
+        
+        # Plot 4: Verification plot - D(t) vs I(t) + rest(t)
+        if len(D_t) > 0 and len(I_t) > 0 and len(rest_t) > 0:
+            verification = [i + r for i, r in zip(I_t, rest_t)]
+            ax4.plot(generations, D_t, 'o-', color='blue', linewidth=2, 
+                    label='D(t)', markersize=4)
+            ax4.plot(generations, verification, 's-', color='green', linewidth=2, 
+                    label='I(t) + rest(t)', markersize=4)
+            
+            # Calculate and display the difference
+            differences = [abs(d - v) for d, v in zip(D_t, verification)]
+            max_diff = max(differences)
+            ax4.text(0.02, 0.98, f'Max difference: {max_diff:.2e}', 
+                    transform=ax4.transAxes, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            ax4.set_xlabel('Generation')
+            ax4.set_ylabel('KL Divergence [bits]')
+            ax4.set_title('Verification: D(t) = I(t) + rest(t)')
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return fig
+
+
+
+def run_evolution_example():
+    """
+    Example demonstrating the evolution from neutral to selection analysis.
+    """
+    print("="*80)
+    print("EVOLUTION FROM NEUTRAL TO SELECTION EXAMPLE")
+    print("="*80)
+    
+    # Parameters
+    N = 40
+    mu = 0.0005
+    s_target = 0.005
+    
+    print(f"Parameters: N={N}, μ={mu}, s_target={s_target}")
+    
+    # Run the evolution analysis using the standalone function
+    evolution_results = evolve_from_neutral_to_selection(
+        N=N, 
+        mu=mu,
+        s_target=s_target, 
+        max_generations=1000, 
+        convergence_tol=1e-6, 
+        save_every=10
+    )
+    
+    # Plot the results
+    plot_evolution_analysis(evolution_results, N)
+    
+    return evolution_results
+
 
 if __name__ == "__main__":
     # Run example analysis
     results = run_markov_analysis_example()
+    
+    # Run evolution example
+    print("\n" + "="*80)
+    print("RUNNING EVOLUTION EXAMPLE")
+    print("="*80)
+    evolution_results = run_evolution_example()
