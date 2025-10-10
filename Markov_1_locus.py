@@ -21,13 +21,13 @@ chain on state space {0, 1, 2, ..., N} where each state represents the
 number of "1" alleles in the population.
 
 The transition probability from j "1" alleles to i "1" alleles is at any time step t:
-    P[i,j] = Binomial(N, i, p')
+    P[i,j] = Binomial(N, i, p')  = probablity of transitioning i <-- j
     
 where p' is the frequency after selection and mutation:
     p_sel = (j/N * (1+s)) / (j/N * (1+s) + (1-j/N))
     p' = (1-μ) * p_sel + μ * (1-p_sel)
 
-The stationary distribution π satisfies: π = P^T π with Σπ_i = 1
+The stationary distribution π satisfies: π = P π with Σπ_i = 1 because P is column-stochastic
 """
 
 import numpy as np
@@ -121,7 +121,7 @@ class WrightFisherMarkovChain:
         Returns:
         --------
         float
-            Transition probability P[i,j]
+            Transition probability P[i,j]: i <-- j
         """
         
         # Current frequency of "1" allele
@@ -183,7 +183,8 @@ class WrightFisherMarkovChain:
         # Fill transition matrix
         for j in range(self.N + 1):  # Current state (columns)
             for i in range(self.N + 1):  # Next state (rows)
-                self.P[i, j] = self._compute_transition_probability(j, i)
+                self.P[i, j] = self._compute_transition_probability(j, i) 
+                # P[i, j] = i <-- j :probability of transitioning from j "1" alleles to i "1" alleles in one generation
         
         # Verify row-stochastic property (debugging)
         column_sums = np.sum(self.P, axis=0)  # Sum over rows for each column
@@ -232,7 +233,7 @@ class WrightFisherMarkovChain:
         
         # Add colorbar
         cbar1 = plt.colorbar(im1, ax=ax1, shrink=0.8)
-        cbar1.set_label('Transition Probability P[i,j]')
+        cbar1.set_label('Transition Probability P[i,j]: i <-- j')
         
         # Set ticks to show actual state numbers
         tick_positions = np.arange(0, self.N+1, max(1, self.N//5))
@@ -250,7 +251,7 @@ class WrightFisherMarkovChain:
         
         # Add colorbar for log scale
         cbar2 = plt.colorbar(im2, ax=ax2, shrink=0.8)
-        cbar2.set_label('log₁₀(P[i,j])')
+        cbar2.set_label('log₁₀(P[i,j]) : i <-- j')
         
         ax2.set_xticks(tick_positions)
         ax2.set_yticks(tick_positions)
@@ -922,7 +923,7 @@ def plot_evolution_analysis(evolution_results, N, figsize=(15, 12)):
     # Add final evolved state
     if len(psi_trajectory) > 0:
         final_psi = psi_trajectory[-1]
-        ax1.plot(states, final_psi, 'o-', color='green', markersize=4,
+        ax1.plot(states, final_psi, '-', color='green', linewidth=2,
                 label=f'ψ({conv_info["final_generation"]}) (evolved)')
     
     ax1.set_xlabel('Number of "1" alleles')
@@ -932,10 +933,10 @@ def plot_evolution_analysis(evolution_results, N, figsize=(15, 12)):
     ax1.grid(True, alpha=0.3)
     
     # Plot 2: D(t) and I(t) on the same plot
-    ax2.plot(generations, D_t, 'o-', color='blue', linewidth=2, 
-            label='D(t) = KL(ψ(t) || φ*)', markersize=4)
-    ax2.plot(generations, I_t, 's-', color='red', linewidth=2, 
-            label='I(t) = KL(ψ(t) || ψ*)', markersize=4)
+    ax2.plot(generations, D_t, '-', color='blue', linewidth=2, 
+            label='D(t) = KL(ψ(t) || φ*)')
+    ax2.plot(generations, I_t, '-', color='red', linewidth=2, 
+            label='I(t) = KL(ψ(t) || ψ*)')
     
     ax2.set_xlabel('Generation')
     ax2.set_ylabel('KL Divergence [bits]')
@@ -950,11 +951,7 @@ def plot_evolution_analysis(evolution_results, N, figsize=(15, 12)):
             mean_freq = np.sum(states * psi_t) / N
             mean_frequencies.append(mean_freq)
         
-        ax3.plot(generations, mean_frequencies, 'o-', color='purple', linewidth=2)
-        ax3.axhline(np.sum(states * phi_star) / N, color='blue', 
-                   linestyle='--', alpha=0.7, label='φ* mean')
-        ax3.axhline(np.sum(states * psi_star) / N, color='red', 
-                   linestyle='--', alpha=0.7, label='ψ* mean')
+        ax3.plot(generations, mean_frequencies, '-', color='purple', linewidth=2)
         
         ax3.set_xlabel('Generation')
         ax3.set_ylabel('Mean frequency of "1" allele')
@@ -965,10 +962,10 @@ def plot_evolution_analysis(evolution_results, N, figsize=(15, 12)):
     # Plot 4: Verification plot - D(t) vs I(t) + rest(t)
     if len(D_t) > 0 and len(I_t) > 0 and len(rest_t) > 0:
         verification = [i + r for i, r in zip(I_t, rest_t)]
-        ax4.plot(generations, D_t, 'o-', color='blue', linewidth=2, 
-                label='D(t)', markersize=4)
-        ax4.plot(generations, verification, 's-', color='green', linewidth=2, 
-                label='I(t) + rest(t)', markersize=4)
+        ax4.plot(generations, D_t, '-', color='blue', linewidth=2, 
+                label='D(t)')
+        ax4.plot(generations, verification, '-', color='green', linewidth=2, 
+                label='I(t) + rest(t)')
         
         # Calculate and display the difference
         differences = [abs(d - v) for d, v in zip(D_t, verification)]
@@ -1597,10 +1594,10 @@ def run_markov_analysis_example():
         ax1.grid(True, alpha=0.3)
         
         # Plot 2: D(t) and I(t) on the same plot
-        ax2.plot(generations, D_t, 'o-', color='blue', linewidth=2, 
-                label='D(t) = KL(ψ(t) || φ*)', markersize=4)
-        ax2.plot(generations, I_t, 's-', color='red', linewidth=2, 
-                label='I(t) = KL(ψ(t) || ψ*)', markersize=4)
+        ax2.plot(generations, D_t, '-', color='blue', linewidth=2, 
+                label='D(t) = KL(ψ(t) || φ*)')
+        ax2.plot(generations, I_t, '-', color='red', linewidth=2, 
+                label='I(t) = KL(ψ(t) || ψ*)')
         
         ax2.set_xlabel('Generation')
         ax2.set_ylabel('KL Divergence [bits]')
@@ -1615,11 +1612,7 @@ def run_markov_analysis_example():
                 mean_freq = np.sum(states * psi_t) / self.N
                 mean_frequencies.append(mean_freq)
             
-            ax3.plot(generations, mean_frequencies, 'o-', color='purple', linewidth=2)
-            ax3.axhline(np.sum(states * phi_star) / self.N, color='blue', 
-                       linestyle='--', alpha=0.7, label='φ* mean')
-            ax3.axhline(np.sum(states * psi_star) / self.N, color='red', 
-                       linestyle='--', alpha=0.7, label='ψ* mean')
+            ax3.plot(generations, mean_frequencies, '-', color='purple', linewidth=2)
             
             ax3.set_xlabel('Generation')
             ax3.set_ylabel('Mean frequency of "1" allele')
