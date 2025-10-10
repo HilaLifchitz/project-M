@@ -225,15 +225,6 @@ def marginals_from_s(N: int, mu: float, s1: float, s2: float, T: int, method: st
 
 
 
-def kl_divergence(p: np.ndarray, q: np.ndarray) -> float:
-    eps = 1e-16
-    p_ = p + eps
-    q_ = q + eps
-    p_ = p_ / np.sum(p_)
-    q_ = q_ / np.sum(q_)
-    return float(np.sum(p_ * (np.log(p_) - np.log(q_))) / math.log(2.0))  # bits
-
-
 # -----------------------------
 # Simplex grid enumeration
 # -----------------------------
@@ -283,6 +274,124 @@ def simplex3_grid(N: int): # dim=3, returning a list of tuples
     """Convenience wrapper for dim=3 (quadruples)."""
     return list(simplex_grid_points(N, dim=3))
 
+#brut force stupid sanity check for the number of points in the 1/N grid simplex
+def verify_simplex_triple_loop(N: int): # for dimension dim=3
+    points = []
+    for i in range(N + 1):          
+        for j in range(N + 1):
+            for l in range(N + 1):      
+                for k in range(N + 1):  
+                    if i + j + k +l== N:  # ⇐ equivalent to x+y+z == 1 without float error
+                        points.append((i / N, j / N, k / N))
+   # print(f"Found {len(points)} points; expected {math.comb(N+2, 2)}")
+    return len(points)
+
+
+#########################################################################################################################
+# Building a 3D simplex measure from independent marginals over counts
+#########################################################################################################################
+
+def build_simplex3_measure_from_marginals(p1: np.ndarray, p2: np.ndarray) -> dict[tuple[float, float, float, float], float]:
+    """
+    Construct a gridded probability measure on the 3D simplex (A,B,C,D) from independent marginals p1, p2.
+
+    Interpretation (genotypes):
+      - A ≡ [0,0]
+      - B ≡ [0,1]
+      - C ≡ [1,0]
+      - D ≡ [1,1]
+
+    For each allele-frequency pair (x, y) with x ∈ {i/N} from p1 and y ∈ {j/N} from p2,
+    map to simplex coordinates:
+      A = (1 - x) * (1 - y)
+      B = (1 - x) * y
+      C = x * (1 - y)
+      D = x * y
+
+    The mass assigned to this simplex point is the product measure p1(x) * p2(y).
+
+    Returns:
+      dict mapping (A,B,C,D) → mass at that grid point. Grid granularity is 1/N where N = len(p1)-1 = len(p2)-1.
+      #NOTICE- this dictionary is not over the entire simplex but only for points that we could reach via i,j \iN [0,1/n,...1]**2
+    """
+    p1 = np.asarray(p1, dtype=float)
+    p2 = np.asarray(p2, dtype=float)
+    p1 = p1 / np.sum(p1)
+    p2 = p2 / np.sum(p2)
+    N1 = len(p1) - 1
+    N2 = len(p2) - 1
+    assert N1 == N2, "p1 and p2 must be over the same N grid"
+    N = N1
+
+    measure: dict[tuple[float, float, float, float], float] = {}
+    for i in range(N + 1):
+        x = i / N
+        for j in range(N + 1):
+            y = j / N
+            # simplex coords
+            A = (1.0 - x) * (1.0 - y)  # [0,0]
+            B = (1.0 - x) * y          # [0,1]
+            C = x * (1.0 - y)          # [1,0]
+            D = x * y                  # [1,1]
+
+            mass = p1[i] * p2[j]
+            key = (A, B, C, D)
+            measure[key] = measure.get(key, 0.0) + mass
+
+    return measure
+
+
+ 
+# This now completes the measure from above to be fully defines over all of the simplex by adding to the dictionary points with measure 0
+def ensure_simplex3_grid_keys(p1: np.ndarray, p2: np.ndarray) -> dict[tuple[float, float, float, float], float]:
+    """
+    Build the simplex measure using p1 and p2 (independent marginals), then ensure that
+    every 1/N-grid simplex point is present with mass 0.0 if it wasn't generated.
+    """
+    measure = build_simplex3_measure_from_marginals(p1, p2)
+    for pt in simplex3_grid(N):
+        if pt not in measure:
+            measure[pt] = 0.0
+    return measure
+
+#########################################################################################################################
+# KL divergence functions
+#########################################################################################################################
+
+def kl_divergence(p: np.ndarray, q: np.ndarray) -> float: # over innocent 1D arrays of probabilities
+    eps = 1e-16
+    p_ = p + eps
+    q_ = q + eps
+    p_ = p_ / np.sum(p_)
+    q_ = q_ / np.sum(q_)
+    return float(np.sum(p_ * (np.log(p_) - np.log(q_))) / math.log(2.0))  # bits
+
+##### CHECK THIS OUT TMR!
+# KL divergence on the 3D simplex
+def kl_on_simplex3_from_measures(measure_p: dict[tuple[float, float, float, float], float],
+                                 measure_q: dict[tuple[float, float, float, float], float],
+                                 N: int,
+                                 eps: float = 1e-12,
+                                 base: float = 2.0) -> float:
+    """
+    KL divergence KL(P || Q) on the 3-simplex grid (quadruples (A,B,C,D) summing to 1 with step 1/N).
+    - measure_p, measure_q: dict mapping (A,B,C,D) → mass; missing keys are treated as 0.
+    - Adds epsilon smoothing and renormalizes both distributions before KL.
+    - Returns KL in bits by default (base=2).
+    """
+    keys = simplex3_grid(N)  # list of quadruples (A,B,C,D)
+    p_vec = np.array([float(measure_p.get(k, 0.0)) for k in keys], dtype=float)
+    q_vec = np.array([float(measure_q.get(k, 0.0)) for k in keys], dtype=float)
+
+    p_vec = p_vec + eps
+    q_vec = q_vec + eps
+    p_vec = p_vec / np.sum(p_vec)
+    q_vec = q_vec / np.sum(q_vec)
+
+    log_base = math.log(base)
+    kl = np.sum(p_vec * (np.log(p_vec) - np.log(q_vec))) / log_base
+    return float(kl)
+
 
 #########################################################################################################################
 # Information theory functions
@@ -311,7 +420,7 @@ if __name__ == '__main__':
     model = MarkovTwoLoci(N=N, mu=mu, s1=s1, s2=s2, quiet=True)
     pi1_star, pi2_star = model.stationary_distributions(method='direct')
     phi = phi_star(N, mu)
-    print(kl_divergence(pi1_star,phi)*kl_divergence(pi2_star,phi))
+    #print(kl_divergence(pi1_star,phi)*kl_divergence(pi2_star,phi))
     
     #fig_2d = model.plot_joint_heatmap(pi1_star, pi2_star)
     #plt.show()
