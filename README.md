@@ -24,8 +24,34 @@ The main simulation engine containing:
 - Analytical functions for neutral distribution `φ(t)` and selection distribution `ψ(t)`
 - Variance computation and normal distribution PDFs
 
-#### `Markov.py`
-Contains the `compute_stationary_quiet` function for computing stationary distributions in Markov chain models.
+#### `Markov_1_locus.py`
+Comprehensive Wright-Fisher Markov chain analysis for single-locus population genetics:
+
+**Core Class: `WrightFisherMarkovChain`**
+- Implements finite Wright-Fisher process with selection and mutation
+- Haploid population of size N with two alleles ("0" wildtype, "1" beneficial)
+- Selection coefficient s: fitness of "1" allele relative to "0" 
+- Symmetric mutation rate μ: probability of allele flipping per generation
+- State space: {0, 1, 2, ..., N} representing number of "1" alleles
+
+**Key Methods:**
+- `construct_transition_matrix()`: Builds (N+1)×(N+1) transition matrix P
+- `solve_stationary_direct()`: Computes stationary distribution via eigenvalue decomposition
+- `solve_stationary_iterative()`: Power method for stationary distribution
+- `get_stationary_statistics()`: Mean, variance, mode, boundary probabilities
+- `plot_stationary_distribution()`: Visualization of steady-state distribution
+
+**Evolution Analysis: `evolve_from_neutral_to_selection()`**
+Implements Iwasa's "free fitness" information-theoretic framework:
+- **φ***: Neutral steady state (s=0)
+- **ψ***: Selection steady state (s>0) 
+- **ψ(t)**: Time-evolving distribution from φ* to ψ*
+- **D(t)**: KL divergence D(t) = KL(ψ(t) || φ*) - total information
+- **I(t)**: KL divergence I(t) = KL(ψ(t) || ψ*) - "free fitness" information
+- **rest(t)**: Cross-term rest = ∫ₓ ψ(t)(x) log(ψ*(x)/φ*(x))
+- **Decomposition**: D(t) = I(t) + rest(t) (information conservation)
+
+This analysis tracks how information flows during evolution from neutral to selection equilibrium, providing insights into the information-theoretic cost of adaptation.
 
 ### Analysis Scripts
 
@@ -46,6 +72,66 @@ Advanced convergence analysis with multiple simulations:
 - **`analyze_autocorrelation_at_points()`**: Autocorrelation analysis at specific time points
 - **`plot_average_dynamics()`**: Visualization of average dynamics with confidence bands
 - **`plot_autocorrelation_analysis()`**: Autocorrelation decay analysis plots
+
+#### `diffusion_vs_markov.py`
+Compares discrete Wright-Fisher Markov chain with continuous diffusion approximation:
+
+**Core Functionality:**
+- **π_M(i)**: Stationary distribution from finite Markov chain (states i=0..N)
+- **π_D(i)**: Diffusion stationary density discretized to N+1 bins
+- **Diffusion Formula**: f(x) ∝ x^{2Nv-1}(1-x)^{2Nu-1}exp[2Nsx] (haploid scaling)
+- **Discretization**: Centered integration over bins [(i-0.5)/N, (i+0.5)/N]
+
+**Comparison Metrics:**
+- **L1 Distance**: Total variation distance between distributions
+- **KL(M||D)**: Kullback-Leibler divergence from Markov to diffusion
+- **KL(D||M)**: Kullback-Leibler divergence from diffusion to Markov  
+- **KS D**: Kolmogorov-Smirnov statistic (maximum CDF difference)
+
+**Key Functions:**
+- `analyze_distances_vs_N(s, mu)`: Batch analysis across N=[50,100,150,200,500,1000,1500,2000]
+- `plot_distances_vs_N(df, s, mu)`: Visualization of distance metrics vs population size
+- `run_comparison()`: Single comparison with optional joint Ne optimization
+- `--optimize-ne`: Jointly searches single Ne used for both Markov and diffusion
+
+**Usage:**
+```bash
+# Basic comparison
+python diffusion_vs_markov.py --N 100 --s 0.005 --mu 0.0005
+
+# Joint Ne optimization  
+python diffusion_vs_markov.py --N 100 --s 0.005 --mu 0.0005 --optimize-ne
+
+# Batch analysis (in Python)
+from diffusion_vs_markov import analyze_distances_vs_N, plot_distances_vs_N
+df = analyze_distances_vs_N(s=0.005, mu=0.0005)
+plot_distances_vs_N(df, s=0.005, mu=0.0005)
+```
+
+This tool validates the diffusion approximation against exact Markov chain results and investigates how approximation quality depends on population size.
+
+#### `Markov_2_loci.py`
+Two-locus Wright-Fisher Markov chain utilities assuming independent loci with shared N and μ, and potentially distinct selection s1, s2.
+
+**Core Functionality:**
+- Builds two single-locus chains (`WrightFisherMarkovChain`) with (N, μ, s1) and (N, μ, s2)
+- Computes stationary distributions per locus and constructs joint distribution via outer product (independence)
+- Evolves marginals via transition matrix powers (supports 2 loci and a generalized multi-locus helper)
+
+**Key APIs:**
+- `MarkovTwoLoci(N, mu, s1, s2)`: wrapper for two independent loci
+  - `construct_transition_matrices()` → (P1, P2)
+  - `stationary_distributions(method='direct')` → (π1*, π2*)
+  - `joint_from_marginals(pi1, pi2)` → Π = π1 ⊗ π2
+  - `plot_joint_heatmap(pi1, pi2)`, `plot_joint_3d(pi1, pi2)`
+- Functional helpers:
+  - `phi_star(N, mu)` neutral stationary distribution (s=0)
+  - `evolve_p_list(P_list, p0_list, T)` generalized evolution for multiple loci
+  - `marginals_from_s(N, mu, s1, s2, T)` → returns p1(T), p2(T) from neutral start
+  - Information measures: `D(T,N,mu,s1,s2)`, `I(T,N,mu,s1,s2)` for Iwasa’s decomposition (product across loci due to independence)
+- Simplex grid utilities (stars-and-bars) to enumerate gridded simplex points for higher-dimensional allele-state spaces
+
+This module provides a clean path to extend to more loci (independent case) and to analyze information dynamics per locus and jointly.
 
 #### `kl_comparison_test.py`
 Systematic comparison of different KL divergence calculation methods:
@@ -128,7 +214,8 @@ main()  # Uses default parameters
 ```
 Miso/
 ├── QE.py                          # Core simulation engine
-├── Markov.py                      # Markov chain utilities
+├── Markov_1_locus.py              # Wright-Fisher Markov chain analysis
+├── diffusion_vs_markov.py         # Markov vs diffusion comparison
 ├── 3.6B_maybe.py                  # Main analysis script
 ├── convergence_analysis_nick.py   # Convergence analysis
 ├── kl_comparison_test.py          # KL divergence comparison
