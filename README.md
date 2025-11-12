@@ -111,27 +111,59 @@ plot_distances_vs_N(df, s=0.005, mu=0.0005)
 This tool validates the diffusion approximation against exact Markov chain results and investigates how approximation quality depends on population size.
 
 #### `Markov_2_loci.py`
-Two-locus Wright-Fisher Markov chain utilities assuming independent loci with shared N and μ, and potentially distinct selection s1, s2.
+Two-locus Wright-Fisher Markov chain utilities. The file contains:
 
-**Core Functionality:**
+1) Independent-loci wrapper (`MarkovTwoLoci`) for quick analyses
 - Builds two single-locus chains (`WrightFisherMarkovChain`) with (N, μ, s1) and (N, μ, s2)
-- Computes stationary distributions per locus and constructs joint distribution via outer product (independence)
-- Evolves marginals via transition matrix powers (supports 2 loci and a generalized multi-locus helper)
+- Computes per-locus stationary distributions and constructs joint via outer product (independence)
+- Convenience plotting (`plot_joint_heatmap`, `plot_joint_3d`) and helpers
+- Information measures over time on allele (P), simplex (X), and genotype (G) spaces
 
-**Key APIs:**
-- `MarkovTwoLoci(N, mu, s1, s2)`: wrapper for two independent loci
-  - `construct_transition_matrices()` → (P1, P2)
-  - `stationary_distributions(method='direct')` → (π1*, π2*)
-  - `joint_from_marginals(pi1, pi2)` → Π = π1 ⊗ π2
-  - `plot_joint_heatmap(pi1, pi2)`, `plot_joint_3d(pi1, pi2)`
-- Functional helpers:
-  - `phi_star(N, mu)` neutral stationary distribution (s=0)
-  - `evolve_p_list(P_list, p0_list, T)` generalized evolution for multiple loci
-  - `marginals_from_s(N, mu, s1, s2, T)` → returns p1(T), p2(T) from neutral start
-  - Information measures: `D(T,N,mu,s1,s2)`, `I(T,N,mu,s1,s2)` for Iwasa’s decomposition (product across loci due to independence)
-- Simplex grid utilities (stars-and-bars) to enumerate gridded simplex points for higher-dimensional allele-state spaces
+2) LD model with recombination (`TwoLocusLD`) and spectral analysis
+- Full two-locus Wright–Fisher with the pipeline selection → recombination → mutation → sampling
+- Pushforwards from simplex (X) to:
+  - allele grid (P): `pushforward_X_to_P(w)` → (N+1)×(N+1)
+  - genotype distribution (G): `pushforward_X_to_G(w)` → 4-vector [00,01,10,11]
+- KL helpers from X: `kl_P_from_X(w, baseline_P)`, `kl_G_from_X(w, baseline_G)`
+- G sanity check: `debug_check_G_pushforward(w)` verifies G via fractions vs counts
+- Spectral modes for many timepoints:
+  - `leading_modes(k, ...)` and streaming evaluator (no need to store all X(t))
+  - `compute_D_I_series_LD(...)` returns tidy DataFrame with columns:
+    - D-series (vs φ*): `D_X, D_P, D_G`
+    - I-series (vs ψ*): `I_X, I_P, I_G`
+- Plotting:
+  - `plot_D_I_series_from_df(df, title=None, r=None)` — two panels (D and I)
+  - `plot_D_I_series_dual_axis_from_df(df, title=None, r=None)` — same but with a separate y-axis for G
+  - `plot_joint_P_3d(P, ...)` — 3D bar plot of joint P measure
 
-This module provides a clean path to extend to more loci (independent case) and to analyze information dynamics per locus and jointly.
+**LD usage example (compute and plot D/I series):**
+```python
+from Markov_2_loci import compute_D_I_series_LD, plot_D_I_series_dual_axis_from_df
+import matplotlib.pyplot as plt
+
+df = compute_D_I_series_LD(
+    N=40, s1=0.005, s2=0.01, r=0.001, mu=5e-4,
+    Ts=[0, 10, 20, 50, 100, 200, 500],
+    modes_k=30
+)
+fig, axes = plot_D_I_series_dual_axis_from_df(
+    df, title='N=40, μ=5e-4, s1=0.005, s2=0.01', r=0.001
+)
+plt.show()
+```
+
+**Validate G pushforward for an X-distribution `w`:**
+```python
+from Markov_2_loci import TwoLocusLD, count_simplex_points
+import numpy as np
+
+ld = TwoLocusLD(N=30, s1=0.005, s2=0.10, r=0.01, mu=0.001)
+S = count_simplex_points(30, 3)
+phi_star = np.ones(S) / S
+res = ld.debug_check_G_pushforward(phi_star, verbose=True)
+```
+
+This module provides both the independent-loci analysis path and a full LD pipeline with efficient spectral evaluation for multi-timepoint information-theoretic tracking across X, P, and G.
 
 #### `kl_comparison_test.py`
 Systematic comparison of different KL divergence calculation methods:
