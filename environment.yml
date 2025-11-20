@@ -1,0 +1,13 @@
+name: miso
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11 # maybe think about 3.11 cuase more stable, if we run into issues
+  - numpy
+  - matplotlib
+  - seaborn
+  - pandas
+  - scipy
+  - pip
+
