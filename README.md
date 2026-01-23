@@ -234,12 +234,47 @@ from convergence_analysis_nick import main
 main()  # Uses default parameters
 ```
 
+## Installation
+
+### Environment Setup
+
+This project includes an `environment.yml` file for easy environment setup with conda, mamba, or micromamba.
+
+**To create a new environment from the file:**
+```bash
+# Using conda
+conda env create -f environment.yml
+
+# Using mamba (faster)
+mamba env create -f environment.yml
+
+# Using micromamba
+micromamba env create -f environment.yml
+```
+
+**To activate the environment:**
+```bash
+conda activate miso
+# or
+mamba activate miso
+# or
+micromamba activate miso
+```
+
+**To update an existing environment:**
+```bash
+conda env update -n miso -f environment.yml --prune
+```
+
+The `--prune` flag removes packages not listed in the file, keeping your environment clean and consistent.
+
 ## Dependencies
 
 - **NumPy**: Numerical computing
 - **SciPy**: Statistical functions and optimization
 - **Matplotlib**: Plotting and visualization
 - **Seaborn**: Enhanced statistical graphics
+- **Pandas**: Data manipulation and analysis
 
 ## File Structure
 
